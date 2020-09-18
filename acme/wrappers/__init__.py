@@ -22,4 +22,5 @@ from acme.wrappers.frame_stacking import FrameStackingWrapper
 from acme.wrappers.gym_wrapper import GymAtariAdapter
 from acme.wrappers.gym_wrapper import GymWrapper
 from acme.wrappers.observation_action_reward import ObservationActionRewardWrapper
+from acme.wrappers.minerl_wrapper import MineRLWrapper
 from acme.wrappers.single_precision import SinglePrecisionWrapper

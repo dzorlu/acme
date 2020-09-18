@@ -20,6 +20,7 @@ from acme.tf.networks.atari import DeepIMPALAAtariNetwork
 from acme.tf.networks.atari import DQNAtariNetwork
 from acme.tf.networks.atari import IMPALAAtariNetwork
 from acme.tf.networks.atari import R2D2AtariNetwork
+from acme.tf.networks.atari import R2D2MineRLNetwork
 from acme.tf.networks.base import RNNCore
 from acme.tf.networks.continuous import LayerNormAndResidualMLP
 from acme.tf.networks.continuous import LayerNormMLP

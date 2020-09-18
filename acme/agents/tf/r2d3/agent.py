@@ -51,6 +51,7 @@ class R2D3(agent.Agent):
                replay_period: int,
                demonstration_dataset: tf.data.Dataset,
                demonstration_ratio: float,
+               model_directory: str,
                counter: counting.Counter = None,
                logger: loggers.Logger = None,
                discount: float = 0.99,
@@ -64,7 +65,8 @@ class R2D3(agent.Agent):
                checkpoint: bool = True,
                min_replay_size: int = 1000,
                max_replay_size: int = 1000000,
-               samples_per_insert: float = 32.0):
+               samples_per_insert: float = 32.0,
+               ):
 
     extra_spec = {
         'core_state': network.initial_state(1),
@@ -131,14 +133,17 @@ class R2D3(agent.Agent):
     )
 
     self._checkpointer = tf2_savers.Checkpointer(
+        directory=model_directory,
         subdirectory='r2d2_learner',
-        time_delta_minutes=60,
+        time_delta_minutes=15,
         objects_to_save=learner.state,
         enable_checkpointing=checkpoint,
     )
 
     self._snapshotter = tf2_savers.Snapshotter(
-        objects_to_save={'network': network}, time_delta_minutes=60.)
+        objects_to_save={'network': network}, 
+        time_delta_minutes=15.,
+        directory=model_directory)
 
     policy_network = snt.DeepRNN([
         network,

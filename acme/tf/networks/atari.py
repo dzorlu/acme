@@ -23,6 +23,7 @@ from acme.tf.networks import embedding
 from acme.tf.networks import policy_value
 from acme.tf.networks import vision
 from acme.wrappers import observation_action_reward
+from acme.wrappers import minerl_wrapper
 
 import sonnet as snt
 import tensorflow as tf
@@ -111,6 +112,45 @@ class R2D2AtariNetwork(base.RNNCore):
 
     return action_values, new_state
 
+class R2D2MineRLNetwork(base.RNNCore):
+  """A recurrent network for use with R2D2.
+  """
+
+  def __init__(self, num_actions: int):
+    super().__init__(name='r2d2_atari_network')
+    self._embed = embedding.OVAREmbedding(
+        torso=AtariTorso(), num_actions=num_actions)
+    self._core = snt.LSTM(512)
+    self._head = duelling.DuellingMLP(num_actions, hidden_sizes=[512])
+
+  def __call__(
+      self,
+      inputs: minerl_wrapper.OVAR,
+      state: snt.LSTMState,
+  ) -> Tuple[QValues, snt.LSTMState]:
+
+    embeddings = self._embed(inputs)
+    embeddings, new_state = self._core(embeddings, state)
+    action_values = self._head(embeddings)  # [B, A]
+
+    return action_values, new_state
+
+  def initial_state(self, batch_size: int, **unused_kwargs) -> snt.LSTMState:
+    return self._core.initial_state(batch_size)
+
+  def unroll(
+      self,
+      inputs: minerl_wrapper.OVAR,
+      state: snt.LSTMState,
+      sequence_length: int,
+  ) -> Tuple[QValues, snt.LSTMState]:
+    """Efficient unroll that applies embeddings, MLP, & convnet in one pass."""
+    embeddings = snt.BatchApply(self._embed)(inputs)  # [T, B, D+V+A+1]
+    embeddings, new_state = snt.static_unroll(self._core, embeddings, state,
+                                              sequence_length)
+    action_values = snt.BatchApply(self._head)(embeddings)
+
+    return action_values, new_state
 
 class IMPALAAtariNetwork(snt.RNNCore):
   """A recurrent network for use with IMPALA.

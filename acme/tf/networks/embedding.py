@@ -17,9 +17,14 @@
 
 from acme.tf.networks import base
 from acme.wrappers import observation_action_reward
+from acme.wrappers import minerl_wrapper
 
 import sonnet as snt
 import tensorflow as tf
+
+import coloredlogs, logging
+coloredlogs.install(logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class OAREmbedding(snt.Module):
@@ -36,11 +41,42 @@ class OAREmbedding(snt.Module):
     # Add dummy trailing dimension to rewards if necessary.
     if len(inputs.reward.shape.dims) == 1:
       inputs = inputs._replace(reward=tf.expand_dims(inputs.reward, axis=-1))
-
+    logger.info(inputs)
     features = self._torso(inputs.observation)  # [T?, B, D]
     action = tf.one_hot(inputs.action, depth=self._num_actions)  # [T?, B, A]
     reward = tf.nn.tanh(inputs.reward)  # [T?, B, 1]
 
     embedding = tf.concat([features, action, reward], axis=-1)  # [T?, B, D+A+1]
+
+    return embedding
+
+class OVAREmbedding(snt.Module):
+  """
+  Module for embedding (observation, obs_vector action, reward) inputs together.
+  MineRL Environment
+  """
+
+  def __init__(self, torso: base.Module, num_actions: int):
+    super().__init__(name='ovar_embedding')
+    self._num_actions = num_actions
+    self._torso = torso
+
+  def __call__(self, inputs: minerl_wrapper.OVAR) -> tf.Tensor:
+    """Embed each of the (observation, action, reward) inputs & concatenate."""
+
+    # Add dummy trailing dimension to rewards if necessary.
+    if len(inputs.reward.shape.dims) == 1:
+      inputs = inputs._replace(reward=tf.expand_dims(inputs.reward, axis=-1))
+
+    # Add dummy trailing dimension to rewards if necessary.
+    if len(inputs.action.shape.dims) == 2:
+      inputs = inputs._replace(action=tf.squeeze(inputs.action, axis=0))
+
+    features = self._torso(inputs.observation)  # [T?, B, D]
+    # previous action
+    action = tf.one_hot(inputs.action, depth=self._num_actions)  # [T?, B, A]
+    # previous reward
+    reward = tf.nn.tanh(inputs.reward)  # [T?, B, 1]
+    embedding = tf.concat([features, inputs.obs_vector, action, reward], axis=-1)  # [T?, B, D+O+A+1]
 
     return embedding
