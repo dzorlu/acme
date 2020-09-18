@@ -14,7 +14,8 @@
 # limitations under the License.
 
 """Generic actor implementation, using TensorFlow and Sonnet."""
-from typing import Optional
+
+from typing import Optional, Tuple
 
 from acme import adders
 from acme import core
@@ -27,7 +28,6 @@ import dm_env
 import sonnet as snt
 import tensorflow as tf
 import tensorflow_probability as tfp
-import tree
 
 tfd = tfp.distributions
 
@@ -59,27 +59,27 @@ class FeedForwardActor(core.Actor):
     # Store these for later use.
     self._adder = adder
     self._variable_client = variable_client
-    self._policy_network = tf.function(policy_network)
+    self._policy_network = policy_network
 
-  def select_action(self, observation: types.NestedArray) -> types.NestedArray:
+  @tf.function
+  def _policy(self, observation: types.NestedTensor) -> types.NestedTensor:
     # Add a dummy batch dimension and as a side effect convert numpy to TF.
-    batched_obs = tf2_utils.add_batch_dim(observation)
+    batched_observation = tf2_utils.add_batch_dim(observation)
 
-    # Forward the policy network.
-    policy_output = self._policy_network(batched_obs)
+    # Compute the policy, conditioned on the observation.
+    policy = self._policy_network(batched_observation)
 
-    # If the policy network parameterises a distribution, sample from it.
-    def maybe_sample(output):
-      if isinstance(output, tfd.Distribution):
-        output = output.sample()
-      return output
-
-    policy_output = tree.map_structure(maybe_sample, policy_output)
-
-    # Convert to numpy and squeeze out the batch dimension.
-    action = tf2_utils.to_numpy_squeeze(policy_output)
+    # Sample from the policy if it is stochastic.
+    action = policy.sample() if isinstance(policy, tfd.Distribution) else policy
 
     return action
+
+  def select_action(self, observation: types.NestedArray) -> types.NestedArray:
+    # Pass the observation through the policy network.
+    action = self._policy(observation)
+
+    # Return a numpy array with squeezed out batch dimension.
+    return tf2_utils.to_numpy_squeeze(action)
 
   def observe_first(self, timestep: dm_env.TimeStep):
     if self._adder:
@@ -125,36 +125,38 @@ class RecurrentActor(core.Actor):
     self._state = None
     self._prev_state = None
 
-    # TODO(b/152382420): Ideally we would call tf.function(network) instead but
-    # this results in an error when using acme RNN snapshots.
-    self._policy = tf.function(policy_network.__call__)
+  @tf.function
+  def _policy(
+      self,
+      observation: types.NestedTensor,
+      state: types.NestedTensor,
+  ) -> Tuple[types.NestedTensor, types.NestedTensor]:
+
+    # Add a dummy batch dimension and as a side effect convert numpy to TF.
+    batched_observation = tf2_utils.add_batch_dim(observation)
+
+    # Compute the policy, conditioned on the observation.
+    policy, new_state = self._network(batched_observation, state)
+
+    # Sample from the policy if it is stochastic.
+    action = policy.sample() if isinstance(policy, tfd.Distribution) else policy
+
+    return action, new_state
 
   def select_action(self, observation: types.NestedArray) -> types.NestedArray:
-    # Add a dummy batch dimension and as a side effect convert numpy to TF.
-    batched_obs = tf2_utils.add_batch_dim(observation)
-
     # Initialize the RNN state if necessary.
     if self._state is None:
       self._state = self._network.initial_state(1)
 
-    # Forward.
-    policy_output, new_state = self._policy(batched_obs, self._state)
+    # Step the recurrent policy forward given the current observation and state.
+    policy_output, new_state = self._policy(observation, self._state)
 
-    # If the policy network parameterises a distribution, sample from it.
-    def maybe_sample(output):
-      if isinstance(output, tfd.Distribution):
-        output = output.sample()
-      return output
-
-    policy_output = tree.map_structure(maybe_sample, policy_output)
-
+    # Bookkeeping of recurrent states for the observe method.
     self._prev_state = self._state
     self._state = new_state
 
-    # Convert to numpy and squeeze out the batch dimension.
-    action = tf2_utils.to_numpy_squeeze(policy_output)
-
-    return action
+    # Return a numpy array with squeezed out batch dimension.
+    return tf2_utils.to_numpy_squeeze(policy_output)
 
   def observe_first(self, timestep: dm_env.TimeStep):
     if self._adder:
