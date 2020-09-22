@@ -15,3 +15,5 @@
 """Dataset interfaces."""
 
 from acme.datasets.reverb import make_reverb_dataset
+from acme.datasets.reverb import _spec_to_shapes_and_dtypes
+

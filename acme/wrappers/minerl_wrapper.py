@@ -57,15 +57,8 @@ class MineRLWrapper(base.EnvironmentWrapper):
     actions = np.vstack(actions)
     self.k_means.fit(actions)
 
-    # self.k_means = MiniBatchKMeans(n_clusters=num_actions, random_state=0)
-
-    # nb_iter = 0
-    # for _, act, _, _,_ in tqdm.tqdm(dat_loader.batch_iter(2, 32, 1, preload_buffer_size=4)):
-    #   nb_iter += 1
-    #   acts = np.concatenate(act['vector']).reshape(-1, 64)
-    #   self.k_means.partial_fit(acts)
-
     logger.info({'finished': len(actions)})
+    del actions
 
   def reset(self) -> dm_env.TimeStep:
     # Initialize with zeros of the appropriate shape/dtype.
@@ -78,7 +71,6 @@ class MineRLWrapper(base.EnvironmentWrapper):
     return new_timestep
 
   def step(self, action) -> dm_env.TimeStep:
-    
     cont_action = self.map_action(action)
     timestep = self._environment.step(cont_action)
     new_timestep = self._augment_observation(timestep)

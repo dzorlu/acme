@@ -34,6 +34,13 @@ import tensorflow as tf
 import tree
 import trfl
 
+from typing import Optional
+
+from acme import datasets
+
+import coloredlogs, logging
+coloredlogs.install(logging.INFO)
+logger_ = logging.getLogger(__name__)
 
 class R2D3(agent.Agent):
   """R2D3 Agent.
@@ -49,7 +56,7 @@ class R2D3(agent.Agent):
                burn_in_length: int,
                trace_length: int,
                replay_period: int,
-               demonstration_dataset: tf.data.Dataset,
+               demonstration_generator: iter,
                demonstration_ratio: float,
                model_directory: str,
                counter: counting.Counter = None,
@@ -71,40 +78,85 @@ class R2D3(agent.Agent):
     extra_spec = {
         'core_state': network.initial_state(1),
     }
+    # replay table
     # Remove batch dimensions.
     extra_spec = tf2_utils.squeeze_batch_dim(extra_spec)
     replay_table = reverb.Table(
         name=adders.DEFAULT_PRIORITY_TABLE,
-        sampler=reverb.selectors.Uniform(),
+        sampler=reverb.selectors.Prioritized(0.8),
         remover=reverb.selectors.Fifo(),
         max_size=max_replay_size,
         rate_limiter=reverb.rate_limiters.MinSize(min_size_to_sample=1),
         signature=adders.SequenceAdder.signature(environment_spec,
                                                    extra_spec))
-    self._server = reverb.Server([replay_table], port=None)
+    # demonstation table.
+    demonstration_table = reverb.Table(
+        name='demonstration_table',
+        sampler=reverb.selectors.Prioritized(0.8),
+        remover=reverb.selectors.Fifo(),
+        max_size=max_replay_size,
+        rate_limiter=reverb.rate_limiters.MinSize(min_size_to_sample=1),
+        signature=adders.SequenceAdder.signature(environment_spec, extra_spec))
+
+
+    # launch server
+    self._server = reverb.Server([replay_table, demonstration_table], port=None)
     address = f'localhost:{self._server.port}'
 
     sequence_length = burn_in_length + trace_length + 1
-    # Component to add things into replay.
+
+    # Component to add things into replay and demo
     sequence_kwargs = dict(
         period=replay_period,
         sequence_length=sequence_length,
     )
     adder = adders.SequenceAdder(client=reverb.Client(address),
-                                   **sequence_kwargs)
+                                 **sequence_kwargs)
+    priority_function = {demonstration_table.name: lambda x: 1.}
+    demo_adder = adders.SequenceAdder(client=reverb.Client(address),
+                                      priority_fns=priority_function,
+                                      **sequence_kwargs)
+    # play demonstrations and write
+    # exhaust the generator
+    # TODO: MAX REPLAY SIZE 
+    _prev_action = 1 # this has to come from spec
+    _add_first = True
+    #include this to make datasets equivalent
+    numpy_state = tf2_utils.to_numpy_squeeze( network.initial_state(1))
+    for ts, action in demonstration_generator:
+      if _add_first:
+        demo_adder.add_first(ts)
+        _add_first = False
+      else:
+        demo_adder.add(_prev_action, ts, extras=(numpy_state,))
+      _prev_action = action
+      # reset to new episode
+      if ts.last():
+        _prev_action = None
+        _add_first = True
 
-    # The dataset object to learn from.
-    dataset = datasets.make_reverb_dataset(
+    # replay dataset
+    max_in_flight_samples_per_worker = 2 * batch_size if batch_size else 100
+    dataset = reverb.ReplayDataset.from_table_signature(
         server_address=address,
-        sequence_length=sequence_length)
+        table=adders.DEFAULT_PRIORITY_TABLE,
+        max_in_flight_samples_per_worker=max_in_flight_samples_per_worker,
+        sequence_length=sequence_length,
+        emit_timesteps=sequence_length is None)
 
-    # Combine with demonstration dataset.
-    transition = functools.partial(_sequence_from_episode,
-                                   extra_spec=extra_spec,
-                                   **sequence_kwargs)
-    dataset_demos = demonstration_dataset.map(transition)
+    # demonstation dataset
+    d_dataset = reverb.ReplayDataset.from_table_signature(
+          server_address=address,
+          table=demonstration_table.name,
+          max_in_flight_samples_per_worker=max_in_flight_samples_per_worker,
+          sequence_length=sequence_length,
+          emit_timesteps=sequence_length is None)
+    
+    print(dataset)
+    print(d_dataset)
+
     dataset = tf.data.experimental.sample_from_datasets(
-        [dataset, dataset_demos],
+        [dataset, d_dataset],
         [1 - demonstration_ratio, demonstration_ratio])
 
     # Batch and prefetch.
