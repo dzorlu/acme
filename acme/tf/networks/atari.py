@@ -80,8 +80,8 @@ class R2D2AtariNetwork(base.RNNCore):
     super().__init__(name='r2d2_atari_network')
     self._embed = embedding.OAREmbedding(
         torso=AtariTorso(), num_actions=num_actions)
-    self._core = snt.LSTM(512)
-    self._head = duelling.DuellingMLP(num_actions, hidden_sizes=[512])
+    self._core = snt.LSTM(256)
+    self._head = duelling.DuellingMLP(num_actions, hidden_sizes=[256])
 
   def __call__(
       self,

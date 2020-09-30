@@ -81,7 +81,7 @@ class Checkpointer:
       subdirectory: str = 'default',
       time_delta_minutes: float = 10.0,
       enable_checkpointing: bool = True,
-      add_uid: bool = True,
+      add_uid: bool = False,
       max_to_keep: int = 1,
       checkpoint_ttl_seconds: int = _DEFAULT_CHECKPOINT_TTL,
       keep_checkpoint_every_n_hours: int = None,
@@ -153,6 +153,7 @@ class Checkpointer:
       return False
 
     # Save any checkpoints.
+    logging.info('*******************')
     logging.info('Saving checkpoint: %s', self._checkpoint_manager.directory)
     self._checkpoint_manager.save()
     self._last_saved = time.time()

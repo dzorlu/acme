@@ -16,6 +16,8 @@ from collections import OrderedDict
 
 import minerl
 import numpy as np
+import pickle
+import os
 
 import coloredlogs, logging
 coloredlogs.install(logging.INFO)
@@ -35,7 +37,9 @@ class MineRLWrapper(base.EnvironmentWrapper):
   def __init__(self, 
                environment: dm_env.Environment, 
                num_actions: int,
+               k_means_path: str,
                dat_loader: minerl.data.data_pipeline.DataPipeline,
+               train: bool = True,
                num_samples: int = 1000
                ):
     super().__init__(environment)
@@ -44,21 +48,30 @@ class MineRLWrapper(base.EnvironmentWrapper):
     self._prev_action: types.NestedArray
     self._prev_reward: types.NestedArray
     self.num_actions = num_actions
-    self.k_means = KMeans(n_clusters=num_actions, random_state=0)
 
-    # replay trajectories
-    trajectories = dat_loader.get_trajectory_names()[:5]
-    actions = list()
-    for t, trajectory in enumerate(trajectories):
-      logger.info({str(t): trajectory})
-      for i, (state, a, r, _, done, meta) in enumerate(dat_loader.load_data(trajectory, include_metadata=True)):    
-        action = a['vector'].reshape(1, 64)
-        actions.append(action)
-    actions = np.vstack(actions)
-    self.k_means.fit(actions)
+    file_path = os.path.join(k_means_path, 'k_means.pkl')
 
-    logger.info({'finished': len(actions)})
-    del actions
+    if train:
+      self.k_means = KMeans(n_clusters=num_actions, random_state=0)
+
+      # replay trajectories
+      trajectories = dat_loader.get_trajectory_names()[:5]
+      actions = list()
+      for t, trajectory in enumerate(trajectories):
+        logger.info({str(t): trajectory})
+        for i, (state, a, r, _, done, meta) in enumerate(dat_loader.load_data(trajectory, include_metadata=True)):    
+          action = a['vector'].reshape(1, 64)
+          actions.append(action)
+      actions = np.vstack(actions)
+      self.k_means.fit(actions)
+      logger.info({'finished': len(actions)})
+      del actions
+      pickle.dump(self.k_means, open(file_path, 'wb'))
+      logger.info({'persisted k-means under': file_path})
+    else:
+      self.k_means = pickle.load(open(file_path,'rb'))
+      logger.info({'loaded k-means from': file_path})
+
 
   def reset(self) -> dm_env.TimeStep:
     # Initialize with zeros of the appropriate shape/dtype.

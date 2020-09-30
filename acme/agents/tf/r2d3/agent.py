@@ -98,7 +98,6 @@ class R2D3(agent.Agent):
         rate_limiter=reverb.rate_limiters.MinSize(min_size_to_sample=1),
         signature=adders.SequenceAdder.signature(environment_spec, extra_spec))
 
-
     # launch server
     self._server = reverb.Server([replay_table, demonstration_table], port=None)
     address = f'localhost:{self._server.port}'
@@ -141,6 +140,7 @@ class R2D3(agent.Agent):
         server_address=address,
         table=adders.DEFAULT_PRIORITY_TABLE,
         max_in_flight_samples_per_worker=max_in_flight_samples_per_worker,
+        num_workers_per_iterator=2, # memory perf improvment attempt  https://github.com/deepmind/acme/issues/33
         sequence_length=sequence_length,
         emit_timesteps=sequence_length is None)
 
@@ -149,11 +149,9 @@ class R2D3(agent.Agent):
           server_address=address,
           table=demonstration_table.name,
           max_in_flight_samples_per_worker=max_in_flight_samples_per_worker,
+          num_workers_per_iterator=2,
           sequence_length=sequence_length,
           emit_timesteps=sequence_length is None)
-    
-    print(dataset)
-    print(d_dataset)
 
     dataset = tf.data.experimental.sample_from_datasets(
         [dataset, d_dataset],
@@ -186,15 +184,15 @@ class R2D3(agent.Agent):
 
     self._checkpointer = tf2_savers.Checkpointer(
         directory=model_directory,
-        subdirectory='r2d2_learner',
+        subdirectory='r2d2_learner_v1',
         time_delta_minutes=15,
         objects_to_save=learner.state,
         enable_checkpointing=checkpoint,
     )
 
     self._snapshotter = tf2_savers.Snapshotter(
-        objects_to_save={'network': network}, 
-        time_delta_minutes=15.,
+        objects_to_save=None, 
+        time_delta_minutes=15000.,
         directory=model_directory)
 
     policy_network = snt.DeepRNN([
@@ -212,9 +210,10 @@ class R2D3(agent.Agent):
         observations_per_step=observations_per_step)
 
   def update(self):
-    super().update()
-    self._snapshotter.save()
-    self._checkpointer.save()
+    updated = super().update()
+    if updated:
+      self._snapshotter.save()
+      self._checkpointer.save()
 
 
 def _sequence_from_episode(observations: acme_types.NestedTensor,

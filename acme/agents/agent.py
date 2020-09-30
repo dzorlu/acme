@@ -87,6 +87,8 @@ class Agent(core.Actor, core.VariableSource):
         self._learner.step()
       # Update actor weights after learner, note in TF this may be a no-op.
       self._actor.update()
+      return True
+    return False
 
   def get_variables(self, names: List[str]) -> List[List[np.ndarray]]:
     return self._learner.get_variables(names)
